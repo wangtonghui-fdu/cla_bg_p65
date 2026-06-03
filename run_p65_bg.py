@@ -221,6 +221,13 @@ def validate_template(cache_dir: Path, required_dirs: list[str], require_marker:
             raise RuntimeError(f"No object files found in template release: {release_dir}")
 
 
+def command_output_tail(text: str, max_lines: int = 20) -> str:
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
 def run_checked(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None, label: str = "command") -> None:
     log(f"[{label}] {subprocess.list2cmdline([str(part) for part in cmd])}")
     run_env = os.environ.copy()
@@ -240,7 +247,9 @@ def run_checked(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | N
     if proc.stdout:
         print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
     if proc.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit code {proc.returncode}")
+        tail = command_output_tail(proc.stdout or "")
+        detail = f"\n{tail}" if tail else ""
+        raise RuntimeError(f"{label} failed with exit code {proc.returncode}{detail}")
 
 
 def python_script_command(script: Path | str) -> list[str]:
@@ -279,7 +288,9 @@ def run_wsl_checked(cmd: list[str], cwd: Path | None = None, label: str = "wsl c
     if proc.stdout:
         print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
     if proc.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit code {proc.returncode}")
+        tail = command_output_tail(proc.stdout or "")
+        detail = f"\n{tail}" if tail else ""
+        raise RuntimeError(f"{label} failed with exit code {proc.returncode}{detail}")
 
 
 def generate_random(cfg: dict[str, Any], case_name: str, instr_count: int, run_dir: Path) -> Path:
@@ -1240,7 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
     reference_summary: dict[str, Any] = {"status": "skipped"}
     if args.reference_sim:
         cfg.setdefault("local", {}).setdefault("reference_sim", {})["enabled"] = True
-    if not args.no_reference_sim:
+    run_reference = bool(reference_sim_cfg(cfg).get("enabled", False)) and not args.no_reference_sim
+    if run_reference:
         reference_summary = run_reference_simulator(cfg, source_s, run_dir, args.case, strict=args.reference_sim_strict)
 
     summary: dict[str, Any] = {

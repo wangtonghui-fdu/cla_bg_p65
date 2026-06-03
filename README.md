@@ -136,6 +136,8 @@ custom_random/random.s
 
 界面里有“模拟器/WO 对比”选项。
 
+默认不打开这个选项。普通 BG 测试只看 WO/W 对比即可。
+
 打开后会额外做一件事：
 
 ```text
@@ -146,6 +148,14 @@ custom_random/random.s
 这个功能用于辅助判断 RTL 和模拟器语义是否一致。
 
 注意：模拟器和 RTL 在同周期多写回的打印顺序可能不同，所以如果只看到同一组写回顺序不同，不一定是 RTL 错。
+
+如果界面提示：
+
+```text
+模拟器/WO: error reference link failed with exit code 1
+```
+
+这表示本地 reference simulator 链接失败，不是远端 `simv` 失败，也不是 WO/W BG 主流程失败。可以先取消勾选“模拟器/WO 对比”，正常跑 BG 测试；需要排查模拟器时再查看该次输出目录里的 `reference_sim_error.log`。
 
 ## 9. 测试结果在哪里
 

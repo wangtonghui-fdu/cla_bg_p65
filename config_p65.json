@@ -71,7 +71,7 @@
       "-ldspsim"
     ],
     "reference_sim": {
-      "enabled": true,
+      "enabled": false,
       "dir": "reference_sim",
       "sim_config": "-c qx320f034 --cla",
       "exclude_regs": [
