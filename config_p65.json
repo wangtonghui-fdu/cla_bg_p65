@@ -1,114 +1,119 @@
-﻿{
-    "target":  "P65",
-    "ssh":  {
-                "host":  "10.18.30.199",
-                "port":  22,
-                "user":  "wangtonghui",
-                "password":  "",
-                "host_key_algorithms":  "+ssh-rsa",
-                "pubkey_accepted_algorithms":  "+ssh-rsa",
-                "connect_timeout":  30
-            },
-    "remote":  {
-                   "template_dir":  "/lx4data/wangtonghui/cla/cla_autotest_p65_bg",
-                   "sim_dir":  "/lx4data/wangtonghui/cla/p65_new/qx_c2000/vcs",
-                   "sim_command":  "printf \u0027exit\\n\u0027 | ./simv +avdd +dvdd",
-                   "sim_setup_command":  "",
-                   "trace_candidates":  [
-                                            "cla_bgtask_sprs_trace.dat",
-                                            "cla_gr_trace.dat"
-                                        ],
-                   "clean_before_sim":  [
-                                            "cla_bgtask_sprs_trace.dat",
-                                            "cla_bgtask_pc_trace.dat",
-                                            "cla_bgtask_state_trace.dat",
-                                            "cla_bgtask_irq_trace.dat",
-                                            "cla_bgtask_timeline_trace.dat",
-                                            "cla_gr_trace.dat",
-                                            "core0_gr_trace.dat",
-                                            "core0_dm_trace.dat",
-                                            "core0_peri_trace.dat",
-                                            "core0_sprs_trace.dat",
-                                            "inter_dump.dat",
-                                            "vcdplus.vpd"
-                                        ]
-               },
-    "local":  {
-                  "random_test_dir":  "random_test",
-                  "build_backend":  "wsl",
-                  "linux_tool_dir":  "p65_linux_tools",
-                  "toolchain_dir":  "random_test/toolchains",
-                  "template_cache_dir":  "cache/p65_bg_template",
-                  "output_dir":  "output",
-                  "project_out":  "F28P6x_driver_core0.out",
-                  "project_map":  "F28P6x_driver_core0.map",
-                  "link_script":  "ldscript_DSPCore0.ld",
-                  "append_task8_trailer":  true,
-                  "unpack_pipes":  false,
-                  "assembler":  "as.bin",
-                  "assembler_args":  [
-                                         "-c"
-                                     ],
-                  "linker":  "ld.bin",
-                  "artifact_patterns":  [
-                                            "task8.o",
-                                            "F28P6x_driver_core0.out",
-                                            "F28P6x_driver_core0.map",
-                                            "F28P6x_driver_core0.dis",
-                                            "F28P6x_driver_core0.S.dis",
-                                            "dram_image.core0.dat",
-                                            "iram_image.core0.dat",
-                                            "dram_image.cla0.dat",
-                                            "iram_image.cla0.dat"
-                                        ],
-                  "link_libraries":  [
-                                         "-lfastrt_fpu32v2",
-                                         "-lqxboot",
-                                         "-lprintf",
-                                         "-lm",
-                                         "-lc",
-                                         "-lrt",
-                                         "-ldspsim"
-                                     ],
-                  "reference_sim":  {
-                                        "enabled":  true,
-                                        "dir":  "reference_sim",
-                                        "sim_config":  "-c qx320f034 --cla",
-                                        "exclude_regs":  [
-                                                             0,
-                                                             30,
-                                                             31
-                                                         ],
-                                        "compare_to_wo":  true
-                                    }
-              },
-    "uploads":  [
-                    {
-                        "local":  "dram_image.core0.dat",
-                        "remote":  "outer_data_mem_core0.dat"
-                    },
-                    {
-                        "local":  "iram_image.core0.dat",
-                        "remote":  "outer_insn_mem_core0.dat"
-                    },
-                    {
-                        "local":  "dram_image.cla0.dat",
-                        "remote":  "outer_data_mem_cla0.dat"
-                    },
-                    {
-                        "local":  "iram_image.cla0.dat",
-                        "remote":  "outer_insn_mem_cla0.dat"
-                    }
-                ],
-    "bootstrap":  {
-                      "required_dirs":  [
-                                            "ldscript",
-                                            "libv2",
-                                            "Release_wo",
-                                            "Release_w"
-                                        ],
-                      "optional_dirs":  [
-
-                                        ]
-                  }
+{
+  "target": "P65",
+  "ssh": {
+    "host": "10.18.30.199",
+    "port": 22,
+    "user": "wangtonghui",
+    "password": "",
+    "host_key_algorithms": "+ssh-rsa",
+    "pubkey_accepted_algorithms": "+ssh-rsa",
+    "connect_timeout": 30
+  },
+  "remote": {
+    "template_dir": "/lx4data/wangtonghui/cla/cla_autotest_p65_bg",
+    "sim_dir": "/lx4data/wangtonghui/cla/p65_new/qx_c2000/vcs",
+    "sim_command": "printf 'exit\\n' | ./simv +avdd +dvdd",
+    "sim_setup_command": "",
+    "trace_candidates": [
+      "cla_bgtask_sprs_trace.dat",
+      "cla_gr_trace.dat"
+    ],
+    "clean_before_sim": [
+      "cla_bgtask_sprs_trace.dat",
+      "cla_bgtask_pc_trace.dat",
+      "cla_bgtask_state_trace.dat",
+      "cla_bgtask_irq_trace.dat",
+      "cla_bgtask_timeline_trace.dat",
+      "cla_gr_trace.dat",
+      "core0_gr_trace.dat",
+      "core0_dm_trace.dat",
+      "core0_peri_trace.dat",
+      "core0_sprs_trace.dat",
+      "inter_dump.dat",
+      "vcdplus.vpd"
+    ]
+  },
+  "local": {
+    "random_test_dir": "random_test",
+    "build_backend": "wsl",
+    "linux_tool_dir": "p65_linux_tools",
+    "toolchain_dir": "random_test/toolchains",
+    "template_cache_dir": "cache/p65_bg_template",
+    "output_dir": "output",
+    "project_out": "F28P6x_driver_core0.out",
+    "project_map": "F28P6x_driver_core0.map",
+    "link_script": "ldscript_DSPCore0.ld",
+    "append_task8_trailer": true,
+    "unpack_pipes": false,
+    "assembler": "as.bin",
+    "assembler_args": [
+      "-c"
+    ],
+    "linker": "ld.bin",
+    "artifact_patterns": [
+      "task8.o",
+      "F28P6x_driver_core0.out",
+      "F28P6x_driver_core0.map",
+      "F28P6x_driver_core0.dis",
+      "F28P6x_driver_core0.S.dis",
+      "dram_image.core0.dat",
+      "iram_image.core0.dat",
+      "dram_image.cla0.dat",
+      "iram_image.cla0.dat"
+    ],
+    "link_libraries": [
+      "-lfastrt_fpu32v2",
+      "-lqxboot",
+      "-lprintf",
+      "-lm",
+      "-lc",
+      "-lrt",
+      "-ldspsim"
+    ],
+    "reference_sim": {
+      "enabled": true,
+      "dir": "reference_sim",
+      "sim_config": "-c qx320f034 --cla",
+      "exclude_regs": [
+        0,
+        30,
+        31
+      ],
+      "compare_to_wo": true
+    }
+  },
+  "uploads": [
+    {
+      "local": "dram_image.core0.dat",
+      "remote": "outer_data_mem_core0.dat"
+    },
+    {
+      "local": "iram_image.core0.dat",
+      "remote": "outer_insn_mem_core0.dat"
+    },
+    {
+      "local": "dram_image.cla0.dat",
+      "remote": "outer_data_mem_cla0.dat"
+    },
+    {
+      "local": "iram_image.cla0.dat",
+      "remote": "outer_insn_mem_cla0.dat"
+    }
+  ],
+  "bootstrap": {
+    "required_dirs": [
+      "ldscript",
+      "libv2",
+      "Release_wo",
+      "Release_w"
+    ],
+    "optional_dirs": []
+  },
+  "ui": {
+    "instr": 1000,
+    "run_count": 3,
+    "sim_timeout": 200,
+    "last_output_dir": "",
+    "geometry": "AdnQywADAAAAAACsAAAAFwAABQsAAAMsAAAArAAAADUAAAULAAADLAAAAAAAAAAABbcAAACsAAAANQAABQsAAAMs"
+  }
 }
