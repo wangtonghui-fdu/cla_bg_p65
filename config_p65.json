@@ -11,7 +11,7 @@
   },
   "remote": {
     "template_dir": "/lx4data/wangtonghui/cla/cla_autotest_p65_bg",
-    "sim_dir": "/lx4data/wangtonghui/cla/p65_new/qx_c2000/vcs",
+    "sim_dir": "/lx4data/wangtonghui/cla/p6/qx_c2000/vcs",
     "sim_command": "printf 'exit\\n' | ./simv +avdd +dvdd",
     "sim_setup_command": "",
     "trace_candidates": [
@@ -98,6 +98,24 @@
     {
       "local": "iram_image.cla0.dat",
       "remote": "outer_insn_mem_cla0.dat"
+    }
+  ],
+  "bootloader_uploads": [
+    {
+      "local": "bootloader/core0.iram_image.bootloader.dat",
+      "remote": "core0.iram_image.bootloader.dat"
+    },
+    {
+      "local": "bootloader/core1.iram_image.bootloader.dat",
+      "remote": "core1.iram_image.bootloader.dat"
+    },
+    {
+      "local": "bootloader/outer_data_mem_core1.dat",
+      "remote": "outer_data_mem_core1.dat"
+    },
+    {
+      "local": "bootloader/outer_insn_mem_core1.dat",
+      "remote": "outer_insn_mem_core1.dat"
     }
   ],
   "bootstrap": {
