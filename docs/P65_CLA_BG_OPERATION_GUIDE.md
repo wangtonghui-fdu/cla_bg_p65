@@ -143,57 +143,97 @@ git pull
 
 那 UI 里就填这个实际存在的 `vcs` 路径。
 
-## 5. 在服务器打开 BG trace
+## 5. 替换服务器仿真目录里的 TB
 
-BG 测试依赖 TB 输出 trace。没有 trace 时，UI 会报：
+BG 测试依赖 TB 输出 trace。不要手工在 TB 里一点点插代码，容易漏改或重复定义。统一做法是：进入你的服务器仿真工程目录，备份原来的 `c2000_tb.v`，然后拉取已经打开 BG trace 的 TB 文件，直接替换原文件。
+
+没有正确替换 TB 时，UI 常见报错是：
 
 ```text
 No non-empty remote trace found
 ```
 
-需要修改服务器工程里的 TB 文件。常见路径是：
+### 5.1 进入 qx_c2000 工程目录
 
-```bash
-cd /lx4data/<user>/cla/p65_new
-vi fpga/c2000_tb.v
+如果你的工程结构是：
+
+```text
+/lx4data/<user>/cla/p65_new/qx_c2000/
 ```
 
-如果你的工程路径是 `qx_c2000/fpga/c2000_tb.v`，就改那个文件：
+就执行：
 
 ```bash
 cd /lx4data/<user>/cla/p65_new/qx_c2000
-vi fpga/c2000_tb.v
 ```
 
-修改前先备份：
+如果你的工程结构是：
+
+```text
+/lx4data/<user>/cla/p65_new/
+```
+
+就执行：
+
+```bash
+cd /lx4data/<user>/cla/p65_new
+```
+
+确认当前目录下能看到：
+
+```bash
+ls fpga/c2000_tb.v vcs
+```
+
+### 5.2 备份原 TB
+
+替换前必须先备份：
 
 ```bash
 cp fpga/c2000_tb.v fpga/c2000_tb.v.bak_$(date +%Y%m%d_%H%M%S)
 ```
 
-然后把仓库里的这份片段插入到 `c2000_tb.v` 中：
+### 5.3 拉取已经打开 BG trace 的 TB
 
-```text
-docs/tb/p65_bg_trace_snippet.v
+把我的 TB 文件拉到服务器当前工程目录下。例如你提供的 TB 放在 Git 仓库、共享目录或服务器固定目录时，按实际位置执行下面其中一种。
+
+如果 TB 在 Git 仓库里：
+
+```bash
+git clone <你的TB仓库地址> /tmp/p65_bg_tb
+cp /tmp/p65_bg_tb/c2000_tb.v fpga/c2000_tb.v
 ```
 
-建议插入位置：
+如果 TB 已经在服务器某个固定目录里：
 
-```text
-module c2000_tb ... 内部
-initial/always 区域附近
-endmodule 之前
+```bash
+cp <你的c2000_tb.v实际路径> fpga/c2000_tb.v
 ```
 
-如果原 TB 里已经有 `fp_cla_gr_bgtask` 或 `cla_bgtask_sprs_trace.dat` 相关代码，不要重复定义同名 file handle。可以保留原有 `$fopen`，只补充缺少的 `$fwrite` 逻辑。
+如果 TB 文件名不是 `c2000_tb.v`，复制时也要改名成目标文件：
 
-最少必须生成这个文件：
+```bash
+cp <你的TB文件路径> fpga/c2000_tb.v
+```
+
+替换完成后检查：
+
+```bash
+ls -lh fpga/c2000_tb.v
+grep -n "cla_bgtask_sprs_trace.dat\\|cla_bgtask_timeline_trace.dat\\|task8_run" fpga/c2000_tb.v
+```
+
+至少应能搜到 `cla_bgtask_sprs_trace.dat`。如果搜不到，说明替换的不是 BG trace 版本 TB。
+
+### 5.4 这个 TB 需要输出哪些 trace
+
+主对比至少需要：
 
 ```text
 cla_bgtask_sprs_trace.dat
 ```
 
-脚本还会尝试下载这些辅助 trace：
+辅助定位建议同时输出：
 
 ```text
 cla_bgtask_pc_trace.dat
@@ -202,7 +242,9 @@ cla_bgtask_irq_trace.dat
 cla_bgtask_timeline_trace.dat
 ```
 
-辅助 trace 不是 WO/W 对比的主输入，但有助于定位“什么时候进入 BG task、什么时候退出、PC 是否跑飞”。
+`cla_bgtask_sprs_trace.dat` 是 WO/W 对比的主输入。其他 trace 主要用于定位“什么时候进入 BG task、什么时候退出、中断什么时候发生、PC 是否跑飞”。
+
+替换 TB 后必须重新编译 `simv`。只替换文件但不重新编译，仿真仍然会用旧 TB。
 
 ## 6. 在服务器编译 simv
 
@@ -554,7 +596,7 @@ simv 没真正跑起来
 
 ```text
 远端仿真目录是否填到 vcs
-TB 是否插入 BG trace 代码
+TB 是否已经替换为 BG trace 版 c2000_tb.v
 simv 是否重新编译
 仿真时间是否太短
 sim_w.log / sim_wo.log 是否有异常
