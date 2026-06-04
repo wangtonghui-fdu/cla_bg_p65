@@ -655,19 +655,44 @@ def extract_reference_gr_trace(sim_log: Path, gr_trace: Path, exclude_regs: list
 
 
 def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path) -> dict[str, Any]:
-    def parse_reg_value(path: Path) -> list[tuple[str, str]]:
-        rows: list[tuple[str, str]] = []
+    def parse_rows(path: Path) -> list[tuple[str, str, str]]:
+        """Return [(reg, value, cycle_key)] of valid BG GR writebacks.
+
+        cycle_key marks the writeback cycle: the RTL trace carries a timestamp
+        ([NNNN ns]) which is the authoritative same-cycle marker; the reference
+        trace has none, so its PC column is used instead.
+        """
+        rows: list[tuple[str, str, str]] = []
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             parts = line.strip().split()
-            if len(parts) >= 2:
-                try:
-                    reg_num = int(parts[0], 16)
-                except ValueError:
-                    continue
-                if reg_num in (0, 30, 31) or not 0 <= reg_num <= 31:
-                    continue
-                rows.append((f"0x{reg_num:02x}", parts[1].lower()))
+            if len(parts) < 3:
+                continue
+            try:
+                reg_num = int(parts[0], 16)
+            except ValueError:
+                continue
+            if reg_num in (0, 30, 31) or not 0 <= reg_num <= 31:
+                continue
+            cycle_key = parts[3] if len(parts) >= 4 else parts[2]
+            rows.append((f"0x{reg_num:02x}", parts[1].lower(), cycle_key))
         return rows
+
+    def reg_value_only(rows: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
+        return [(reg, value) for reg, value, _key in rows]
+
+    def rtl_cycle_sizes(rows: list[tuple[str, str, str]]) -> list[int]:
+        # Number of writebacks in each consecutive same-cycle_key run. These row
+        # counts define the cycle boundaries; we slice the (positionally aligned)
+        # reference rows by the same counts, so a within-cycle reorder never
+        # desynchronizes the two traces.
+        sizes: list[int] = []
+        last_key: str | None = None
+        for _reg, _value, key in rows:
+            if key != last_key:
+                sizes.append(0)
+                last_key = key
+            sizes[-1] += 1
+        return sizes
 
     def find_reference_start(ref_rows: list[tuple[str, str]], rtl_rows: list[tuple[str, str]]) -> tuple[int, int]:
         best_offset = 0
@@ -688,60 +713,103 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
             return best_offset, best_match
         return 0, best_match
 
-    ref_rows = parse_reg_value(ref_path)
-    rtl_rows = parse_reg_value(rtl_path)
-    ref_start, prefix_match = find_reference_start(ref_rows, rtl_rows)
-    aligned_ref_rows = ref_rows[ref_start:]
-    count = min(len(aligned_ref_rows), len(rtl_rows))
-    mismatches: list[str] = []
-    first_mismatch_line = 0
-    for idx in range(count):
-        if aligned_ref_rows[idx] == rtl_rows[idx]:
-            continue
-        if first_mismatch_line == 0:
-            first_mismatch_line = idx + 1
-        ref_line = ref_start + idx + 1
-        mismatches.append(
-            f"line {idx + 1} (ref line {ref_line}): "
-            f"REF={aligned_ref_rows[idx][0]} {aligned_ref_rows[idx][1]} | "
-            f"RTL={rtl_rows[idx][0]} {rtl_rows[idx][1]}"
-        )
-    if len(aligned_ref_rows) != len(rtl_rows):
-        if first_mismatch_line == 0:
-            first_mismatch_line = count + 1
-        mismatches.append(f"row count differs after alignment: REF={len(aligned_ref_rows)} RTL={len(rtl_rows)}")
+    ref_rows_full = parse_rows(ref_path)
+    rtl_rows_full = parse_rows(rtl_path)
+    ref_rv = reg_value_only(ref_rows_full)
+    rtl_rv = reg_value_only(rtl_rows_full)
+    ref_start, prefix_match = find_reference_start(ref_rv, rtl_rv)
+    aligned_ref = ref_rv[ref_start:]
 
+    sizes = rtl_cycle_sizes(rtl_rows_full)
+
+    def regs_of(group: list[tuple[str, str]]) -> str:
+        return "/".join(sorted({reg for reg, _v in group}, key=lambda r: int(r, 16)))
+
+    real: list[str] = []        # not ignorable: value / missing / extra
+    ignorable: list[str] = []   # same-cycle writeback reorder
+    real_count = 0
+    first_real_cycle = 0
+
+    ref_idx = 0
+    rtl_idx = 0
+    for ci, n in enumerate(sizes, 1):
+        tg = rtl_rv[rtl_idx : rtl_idx + n]
+        rtl_idx += n
+        rg = aligned_ref[ref_idx : ref_idx + n]
+        ref_idx += n
+        if sorted(rg) == sorted(tg):
+            if rg != tg:
+                ignorable.append(f"cycle {ci}: writebacks {regs_of(rg)} reordered (values identical)")
+            continue
+        if first_real_cycle == 0:
+            first_real_cycle = ci
+        ref_dict = dict(rg)
+        rtl_dict = dict(tg)
+        for reg in sorted(set(ref_dict) | set(rtl_dict), key=lambda r: int(r, 16)):
+            rv = ref_dict.get(reg)
+            tv = rtl_dict.get(reg)
+            if rv == tv:
+                continue
+            if rv is None:
+                real.append(f"cycle {ci} {reg}: REF=<none> RTL={tv}  (extra writeback in RTL)")
+            elif tv is None:
+                real.append(f"cycle {ci} {reg}: REF={rv} RTL=<none>  (missing in RTL)")
+            else:
+                try:
+                    delta = int(rv, 16) - int(tv, 16)
+                    hint = f"  (REF-RTL={delta:+d}{' ULP' if -4 <= delta <= 4 else ''})"
+                except ValueError:
+                    hint = ""
+                real.append(f"cycle {ci} {reg}: REF={rv} RTL={tv}{hint}")
+            real_count += 1
+
+    trailing = len(aligned_ref) - ref_idx
+    if trailing > 0:
+        if first_real_cycle == 0:
+            first_real_cycle = len(sizes) + 1
+        real.append(f"{trailing} trailing reference writeback(s) with no matching RTL cycle")
+        real_count += trailing
+
+    passed = real_count == 0
+    n_cycles = len(sizes)
     lines = [
         "=" * 80,
-        "Reference simulator vs RTL WO trace",
+        "Reference simulator vs RTL WO trace -- classified comparison",
         "=" * 80,
         f"Reference trace: {ref_path}",
         f"RTL WO trace   : {rtl_path}",
-        "Comparison method: first 2 whitespace-separated columns (GR index + value), after filtering GR0/GR30/GR31 and aligning reference startup rows",
+        "Cycles are defined by the RTL timestamp; reference rows are sliced by the same",
+        "per-cycle counts. Within a cycle, writeback order is ignored (set compare);",
+        "any value / missing / extra writeback is a real, non-ignorable error.",
         "",
-        f"RESULT: {'PASS' if not mismatches else 'FAIL'}",
-        f"Total lines compared: {count}",
-        f"Reference rows: {len(ref_rows)}",
-        f"Reference startup rows skipped: {ref_start}",
-        f"Reference prefix match rows: {prefix_match}",
-        f"Aligned reference rows: {len(aligned_ref_rows)}",
-        f"RTL WO rows: {len(rtl_rows)}",
-        f"Number of mismatches: {len(mismatches)}",
+        f"RESULT: {'PASS' if passed else 'FAIL'}",
+        f"RTL cycles: {n_cycles}   reference writebacks: {len(ref_rv)}   RTL writebacks: {len(rtl_rv)}",
+        f"Reference startup rows skipped: {ref_start} (prefix match {prefix_match})",
+        f"Ignorable (same-cycle reorder) cycles: {len(ignorable)}",
+        f"Real (value / missing / extra) errors: {real_count}",
+        "",
     ]
-    if mismatches:
-        lines.extend(["", "Detailed Mismatch Information:", "-" * 80])
-        lines.extend(f"{i}. {msg}" for i, msg in enumerate(mismatches, 1))
+    if real:
+        lines += ["-" * 80, "[REAL] NOT IGNORABLE -- value / missing / extra writebacks:", "-" * 80]
+        lines += [f"{i}. {m}" for i, m in enumerate(real, 1)]
+        lines += [""]
+    if ignorable:
+        lines += ["-" * 80, "[IGNORABLE] same-cycle writeback reorder (not an RTL error):", "-" * 80]
+        lines += [f"{i}. {m}" for i, m in enumerate(ignorable, 1)]
+        lines += [""]
+    if not real and not ignorable:
+        lines += ["No differences."]
     compare_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
-        "pass": not mismatches,
-        "lines_compared": count,
-        "reference_rows": len(ref_rows),
+        "pass": passed,
+        "rtl_cycles": n_cycles,
+        "reference_writebacks": len(ref_rv),
+        "rtl_writebacks": len(rtl_rv),
         "reference_startup_rows_skipped": ref_start,
         "reference_prefix_match_rows": prefix_match,
-        "aligned_reference_rows": len(aligned_ref_rows),
-        "rtl_wo_rows": len(rtl_rows),
-        "mismatches": len(mismatches),
-        "first_mismatch_line": first_mismatch_line,
+        "ignorable_reorder_cycles": len(ignorable),
+        "real_mismatches": real_count,
+        "first_real_cycle": first_real_cycle,
         "compare_log": str(compare_path),
     }
 
