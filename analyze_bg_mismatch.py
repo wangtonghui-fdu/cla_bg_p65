@@ -96,15 +96,16 @@ def find_single_extra_row(wo_rows: list[TraceRow], w_rows: list[TraceRow], aroun
 
 def parse_task8_address(run_dir: Path) -> int | None:
     for release in ("Release_w", "Release_wo"):
-        map_path = run_dir / "work" / release / "F28P6x_driver_core0.map"
-        if not map_path.exists():
-            continue
-        for line in map_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if " task8" not in line:
+        for base in (run_dir / "work" / release, run_dir / release):
+            map_path = base / "F28P6x_driver_core0.map"
+            if not map_path.exists():
                 continue
-            match = MAP_TASK8_RE.search(line)
-            if match:
-                return int(match.group(1), 16)
+            for line in map_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if " task8" not in line:
+                    continue
+                match = MAP_TASK8_RE.search(line)
+                if match:
+                    return int(match.group(1), 16)
     return None
 
 
@@ -136,18 +137,19 @@ def build_task8_pc_map(task8: Path, task8_addr: int | None) -> tuple[dict[int, t
 
 def parse_disassembly(run_dir: Path) -> dict[int, str]:
     for release in ("Release_w", "Release_wo"):
-        dis_path = run_dir / "work" / release / "F28P6x_driver_core0.S.dis"
-        if not dis_path.exists():
-            dis_path = run_dir / "work" / release / "F28P6x_driver_core0.dis"
-        if not dis_path.exists():
-            continue
-        dis: dict[int, str] = {}
-        for line in dis_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            match = DIS_RE.match(line)
-            if not match:
+        for base in (run_dir / "work" / release, run_dir / release):
+            dis_path = base / "F28P6x_driver_core0.S.dis"
+            if not dis_path.exists():
+                dis_path = base / "F28P6x_driver_core0.dis"
+            if not dis_path.exists():
                 continue
-            dis[int(match.group(1), 16)] = match.group(2).strip()
-        return dis
+            dis: dict[int, str] = {}
+            for line in dis_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                match = DIS_RE.match(line)
+                if not match:
+                    continue
+                dis[int(match.group(1), 16)] = match.group(2).strip()
+            return dis
     return {}
 
 

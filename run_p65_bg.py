@@ -1292,15 +1292,12 @@ def write_analysis_report(run_dir: Path) -> None:
 
 
 def copy_key_artifacts(cfg: dict[str, Any], work_dir: Path, run_dir: Path) -> None:
-    patterns = [str(item) for item in cfg["local"].get("artifact_patterns", [
-        "task8.o",
-        cfg["local"].get("project_out", "F28P6x_driver_core0.out"),
-        cfg["local"].get("project_map", "F28P6x_driver_core0.map"),
-        "dram_image.core0.dat",
-        "iram_image.core0.dat",
-        "dram_image.cla0.dat",
-        "iram_image.cla0.dat",
-    ])]
+    # Archive only what post-hoc analysis needs (PC -> source mapping): the linker
+    # map and the source-interleaved disassembly. The .out, object files and RAM
+    # images are build/upload intermediates and are not kept.
+    project_out = cfg["local"].get("project_out", "F28P6x_driver_core0.out")
+    project_map = cfg["local"].get("project_map", "F28P6x_driver_core0.map")
+    patterns = [project_map, f"{Path(project_out).stem}.S.dis"]
     for release in ("Release_wo", "Release_w"):
         release_dir = work_dir / release
         archive_dir = run_dir / release
@@ -1309,6 +1306,18 @@ def copy_key_artifacts(cfg: dict[str, Any], work_dir: Path, run_dir: Path) -> No
             src = release_dir / pattern
             if src.exists():
                 shutil.copy2(src, archive_dir / src.name)
+
+
+def cleanup_scratch(run_dir: Path) -> None:
+    """Remove build/sim scratch after a passing run (kept on failure for debugging)."""
+    removed: list[str] = []
+    for name in ("work", "reference_sim", "generated"):
+        target = run_dir / name
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            removed.append(name)
+    if removed:
+        log(f"cleaned scratch dirs (run passed): {', '.join(removed)}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1322,6 +1331,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--force-bootstrap", action="store_true")
     parser.add_argument("--sim-timeout", type=int, default=300)
     parser.add_argument("--keep-remote-trace", action="store_true")
+    parser.add_argument("--keep-scratch", action="store_true", help="Do not delete work/ and reference_sim/ scratch even on a passing run.")
     parser.add_argument("--no-remote-run", action="store_true")
     parser.add_argument("--reference-sim", action="store_true", help="Run the local instruction reference simulator.")
     parser.add_argument("--no-reference-sim", action="store_true", help="Skip the local instruction reference simulator.")
@@ -1408,6 +1418,8 @@ def main(argv: list[str] | None = None) -> int:
     log(f"Summary: {run_dir / 'summary.json'}")
     if not args.no_remote_run:
         write_analysis_report(run_dir)
+    if summary["status"] == "pass" and not args.keep_scratch:
+        cleanup_scratch(run_dir)
     return 0 if summary["status"] in ("pass", "build_only") else 2
 
 
