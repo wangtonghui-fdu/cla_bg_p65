@@ -600,6 +600,7 @@ def validate_reference_sim_root(sim_root: Path) -> dict[str, Path]:
         "assembler": sim_root / "toolchains" / "bin" / "as.bin",
         "linker": sim_root / "toolchains" / "bin" / "ld.bin",
         "link_script": sim_root / "toolchains" / "lib" / "qx320f" / "link_8slots.ld",
+        "main_sim": sim_root / "toolchains" / "lib" / "qx320f" / "_main_sim.o",
         "lib_dir": sim_root / "toolchains" / "lib" / "qx320f" / "fp64",
         "dat_script": sim_root / "toolchains" / "test" / "scripts" / "trobjdat_8slot.py",
         "tools_dir": sim_root / "toolchains" / "tools",
@@ -610,6 +611,17 @@ def validate_reference_sim_root(sim_root: Path) -> dict[str, Path]:
     if missing:
         raise RuntimeError("Reference simulator files are missing:\n" + "\n".join(missing))
     return paths
+
+
+def prepare_reference_link_script(paths: dict[str, Path], tmp_dir: Path) -> Path:
+    raw = paths["link_script"].read_text(encoding="utf-8", errors="replace")
+    main_sim = windows_to_wsl_path(paths["main_sim"])
+    patched = re.sub(r"STARTUP\([^)]*_main_sim\.o\)", f"STARTUP({main_sim})", raw)
+    if patched == raw and "_main_sim.o" not in raw:
+        patched = raw.replace("ENTRY(_main)", f"STARTUP({main_sim})\nENTRY(_main)", 1)
+    portable = tmp_dir / "link_8slots.portable.ld"
+    portable.write_text(patched, encoding="utf-8", errors="replace")
+    return portable
 
 
 def extract_reference_gr_trace(sim_log: Path, gr_trace: Path, exclude_regs: list[int]) -> int:
@@ -722,6 +734,7 @@ def run_reference_simulator(
 
         sim_source = test_dir / f"{case_name}.s"
         shutil.copy2(source_s, sim_source)
+        portable_link_script = prepare_reference_link_script(paths, tmp_dir)
         log(f"----- reference simulator ({case_name}) -----")
         log(f"reference source: {sim_source}")
 
@@ -751,7 +764,7 @@ def run_reference_simulator(
             [
                 windows_to_wsl_path(paths["linker"]),
                 "-T",
-                windows_to_wsl_path(paths["link_script"]),
+                windows_to_wsl_path(portable_link_script),
                 "-L",
                 windows_to_wsl_path(paths["lib_dir"]),
                 f"./tmp/{case_name}.o",

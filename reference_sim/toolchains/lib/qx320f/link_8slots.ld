@@ -1,7 +1,7 @@
 OUTPUT_FORMAT("elf32-tradlittlemips", "elf32-tradbigmips",
 	      "elf32-tradlittlemips")
 OUTPUT_ARCH(mips)
-STARTUP(/mnt/g/QX/random_test/toolchains/3slot_320f/lib/qx320f/_main_sim.o)
+STARTUP(_main_sim.o)
 ENTRY(_main)
 /*SEARCH_DIR("=/usr/local/lib"); SEARCH_DIR("=/lib"); SEARCH_DIR("=/usr/lib");
 */
