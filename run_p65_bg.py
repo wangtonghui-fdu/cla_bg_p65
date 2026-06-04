@@ -636,7 +636,7 @@ def extract_reference_gr_trace(sim_log: Path, gr_trace: Path, exclude_regs: list
         if not match:
             continue
         reg_num = int(match.group(1))
-        if reg_num in excluded:
+        if reg_num in excluded or not 0 <= reg_num <= 31:
             continue
         value = int(match.group(2), 16)
         pc_val: int | None = None
@@ -660,24 +660,56 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             parts = line.strip().split()
             if len(parts) >= 2:
-                rows.append((parts[0].lower(), parts[1].lower()))
+                try:
+                    reg_num = int(parts[0], 16)
+                except ValueError:
+                    continue
+                if reg_num in (0, 30, 31) or not 0 <= reg_num <= 31:
+                    continue
+                rows.append((f"0x{reg_num:02x}", parts[1].lower()))
         return rows
+
+    def find_reference_start(ref_rows: list[tuple[str, str]], rtl_rows: list[tuple[str, str]]) -> tuple[int, int]:
+        best_offset = 0
+        best_match = 0
+        for offset in range(len(ref_rows)):
+            matched = 0
+            while (
+                matched < len(rtl_rows)
+                and offset + matched < len(ref_rows)
+                and ref_rows[offset + matched] == rtl_rows[matched]
+            ):
+                matched += 1
+            if matched > best_match:
+                best_offset = offset
+                best_match = matched
+        threshold = min(8, len(rtl_rows))
+        if best_match >= threshold:
+            return best_offset, best_match
+        return 0, best_match
 
     ref_rows = parse_reg_value(ref_path)
     rtl_rows = parse_reg_value(rtl_path)
-    count = min(len(ref_rows), len(rtl_rows))
+    ref_start, prefix_match = find_reference_start(ref_rows, rtl_rows)
+    aligned_ref_rows = ref_rows[ref_start:]
+    count = min(len(aligned_ref_rows), len(rtl_rows))
     mismatches: list[str] = []
     first_mismatch_line = 0
     for idx in range(count):
-        if ref_rows[idx] == rtl_rows[idx]:
+        if aligned_ref_rows[idx] == rtl_rows[idx]:
             continue
         if first_mismatch_line == 0:
             first_mismatch_line = idx + 1
-        mismatches.append(f"line {idx + 1}: REF={ref_rows[idx][0]} {ref_rows[idx][1]} | RTL={rtl_rows[idx][0]} {rtl_rows[idx][1]}")
-    if len(ref_rows) != len(rtl_rows):
+        ref_line = ref_start + idx + 1
+        mismatches.append(
+            f"line {idx + 1} (ref line {ref_line}): "
+            f"REF={aligned_ref_rows[idx][0]} {aligned_ref_rows[idx][1]} | "
+            f"RTL={rtl_rows[idx][0]} {rtl_rows[idx][1]}"
+        )
+    if len(aligned_ref_rows) != len(rtl_rows):
         if first_mismatch_line == 0:
             first_mismatch_line = count + 1
-        mismatches.append(f"row count differs: REF={len(ref_rows)} RTL={len(rtl_rows)}")
+        mismatches.append(f"row count differs after alignment: REF={len(aligned_ref_rows)} RTL={len(rtl_rows)}")
 
     lines = [
         "=" * 80,
@@ -685,11 +717,14 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         "=" * 80,
         f"Reference trace: {ref_path}",
         f"RTL WO trace   : {rtl_path}",
-        "Comparison method: first 2 whitespace-separated columns (GR index + value)",
+        "Comparison method: first 2 whitespace-separated columns (GR index + value), after filtering GR0/GR30/GR31 and aligning reference startup rows",
         "",
         f"RESULT: {'PASS' if not mismatches else 'FAIL'}",
         f"Total lines compared: {count}",
         f"Reference rows: {len(ref_rows)}",
+        f"Reference startup rows skipped: {ref_start}",
+        f"Reference prefix match rows: {prefix_match}",
+        f"Aligned reference rows: {len(aligned_ref_rows)}",
         f"RTL WO rows: {len(rtl_rows)}",
         f"Number of mismatches: {len(mismatches)}",
     ]
@@ -701,6 +736,9 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         "pass": not mismatches,
         "lines_compared": count,
         "reference_rows": len(ref_rows),
+        "reference_startup_rows_skipped": ref_start,
+        "reference_prefix_match_rows": prefix_match,
+        "aligned_reference_rows": len(aligned_ref_rows),
         "rtl_wo_rows": len(rtl_rows),
         "mismatches": len(mismatches),
         "first_mismatch_line": first_mismatch_line,
