@@ -10,3 +10,4 @@ dist/
 ui_settings.json
 _not_upload_scripts/
 bug_examples/
+.claude/
