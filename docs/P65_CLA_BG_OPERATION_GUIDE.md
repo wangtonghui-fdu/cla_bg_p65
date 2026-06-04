@@ -99,23 +99,23 @@ Start_P65_BG_UI.bat
 ssh <用户名>@10.18.30.199
 ```
 
-选择一个放仿真工程的目录，例如：
+创建固定工程目录：
 
 ```bash
-mkdir -p /lx4data/$USER/cla
-cd /lx4data/$USER/cla
+mkdir -p /lx4data/$USER/cla/p65_new
+cd /lx4data/$USER/cla/p65_new
 ```
 
-拉取 P65 分支：
+拉取 P65 `qx_c2000` 工程：
 
 ```bash
-git clone -b cla-p659 git@10.18.30.198:qx_dsp/qx_c2000.git p65_new
+git clone -b cla-p659 git@10.18.30.198:qx_dsp/qx_c2000.git qx_c2000
 ```
 
-拉完后目录结构应类似：
+拉完后目录结构是：
 
 ```text
-/lx4data/<user>/cla/p65_new/
+/lx4data/<user>/cla/p65_new/qx_c2000/
   sourceme
   fpga/
   vcs/
@@ -125,23 +125,15 @@ git clone -b cla-p659 git@10.18.30.198:qx_dsp/qx_c2000.git p65_new
 如果你已经有工程，只需要更新：
 
 ```bash
-cd /lx4data/<user>/cla/p65_new
+cd /lx4data/<user>/cla/p65_new/qx_c2000
 git pull
 ```
 
-后面 UI 里的“远端仿真目录”要填写到 `vcs` 目录，例如：
-
-```text
-/lx4data/<user>/cla/p65_new/vcs
-```
-
-如果你的工程外面还有一层 `qx_c2000`，例如：
+后面 UI 里的“远端仿真目录”固定填写：
 
 ```text
 /lx4data/<user>/cla/p65_new/qx_c2000/vcs
 ```
-
-那 UI 里就填这个实际存在的 `vcs` 路径。
 
 ## 5. 替换服务器仿真目录里的 TB
 
@@ -155,31 +147,11 @@ No non-empty remote trace found
 
 ### 5.1 进入 qx_c2000 工程目录
 
-如果你的工程结构是：
-
-```text
-/lx4data/<user>/cla/p65_new/qx_c2000/
-```
-
-就执行：
-
 ```bash
 cd /lx4data/<user>/cla/p65_new/qx_c2000
 ```
 
-如果你的工程结构是：
-
-```text
-/lx4data/<user>/cla/p65_new/
-```
-
-就执行：
-
-```bash
-cd /lx4data/<user>/cla/p65_new
-```
-
-确认当前目录下能看到：
+确认当前目录下能看到 `fpga/c2000_tb.v` 和 `vcs`：
 
 ```bash
 ls fpga/c2000_tb.v vcs
@@ -248,25 +220,16 @@ cla_bgtask_timeline_trace.dat
 
 ## 6. 在服务器编译 simv
 
-进入工程根目录，先 source 环境：
+进入 `qx_c2000` 工程根目录，先 source 环境：
 
 ```bash
-cd /lx4data/<user>/cla/p65_new
+cd /lx4data/<user>/cla/p65_new/qx_c2000
 source sourceme
 ```
 
 进入 `vcs` 目录编译：
 
 ```bash
-cd vcs
-make comp_fullchip
-```
-
-如果工程路径是多一层：
-
-```bash
-cd /lx4data/<user>/cla/p65_new/qx_c2000
-source sourceme
 cd vcs
 make comp_fullchip
 ```
@@ -293,7 +256,7 @@ error while loading shared libraries: libvcspc__...
 通常是没有在工程根目录执行 `source sourceme`，或者 `make comp_fullchip` 没重新编译完整。重新执行：
 
 ```bash
-cd /lx4data/<user>/cla/p65_new
+cd /lx4data/<user>/cla/p65_new/qx_c2000
 source sourceme
 cd vcs
 make comp_fullchip
@@ -316,13 +279,7 @@ SSH Host: 10.18.30.199
 Port: 22
 User: 服务器用户名
 Password: 服务器密码
-仿真目录: /lx4data/<user>/cla/p65_new/vcs
-```
-
-如果你的 `vcs` 在 `qx_c2000` 下，就填：
-
-```text
-/lx4data/<user>/cla/p65_new/qx_c2000/vcs
+仿真目录: /lx4data/<user>/cla/p65_new/qx_c2000/vcs
 ```
 
 填完点击“保存配置”。
@@ -565,7 +522,7 @@ CR/OFF/BAR/MR 地址寄存器操作附近
 如果 UI 报找不到 trace，登录服务器检查 `vcs` 目录：
 
 ```bash
-cd /lx4data/<user>/cla/p65_new/vcs
+cd /lx4data/<user>/cla/p65_new/qx_c2000/vcs
 ls -lh cla_bgtask_sprs_trace.dat cla_gr_trace.dat
 ```
 
