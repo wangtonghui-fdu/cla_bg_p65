@@ -17,8 +17,13 @@ MAX_STORE_WEIGHT = STORE_WEIGHT.MAX_STORE_WEIGHT
 
 CR_MODEL = TestConfig.CR_MODEL
 TEST_CLA = TestConfig.TEST_CLA
-CLA_NOT_SUPPORT_LOAD = ClaConfig.CLA_NOT_SUPPORT_LOAD 
+CLA_NOT_SUPPORT_LOAD = ClaConfig.CLA_NOT_SUPPORT_LOAD
 CLA_NOT_SUPPORT_STORE = ClaConfig.CLA_NOT_SUPPORT_STORE
+DISABLE_CLA_ADDR_REGS = TestConfig.DISABLE_CLA_ADDR_REGS
+# loado*/storeo* use OFF/BAR/MR indirect addressing; they cannot be generated
+# when address registers are disabled (the OFF/BAR/MR pools are emptied).
+ADDR_REG_LOAD = {"loado16", "loado32"}
+ADDR_REG_STORE = {"storeo16", "storeo32"}
 
 
 def handle_slot3_instr(instr_name: str):
@@ -64,7 +69,7 @@ def handle_slot3_instr(instr_name: str):
         if not TEST_CLA:
             choices = [key for key in store_instr_weight.keys() if key != "random" and key != "random2" and store_instr_weight[key] >= weight]
         else:
-            choices = [key for key in store_instr_weight.keys() if key != "random" and key != "random2" and store_instr_weight[key] >= weight and key not in CLA_NOT_SUPPORT_STORE]
+            choices = [key for key in store_instr_weight.keys() if key != "random" and key != "random2" and store_instr_weight[key] >= weight and key not in CLA_NOT_SUPPORT_STORE and not (DISABLE_CLA_ADDR_REGS and key in ADDR_REG_STORE)]
              
         # 随机选择一个指令并执行
         store_instr_map[random.choice(choices)]()
@@ -115,7 +120,7 @@ def handle_slot2_instr(instr_name: str):
         if not TEST_CLA:
             choices = [key for key in load_instr_weight.keys() if key != "random" and key != "random2" and load_instr_weight[key] >= weight]
         else:
-            choices = [key for key in load_instr_weight.keys() if key != "random" and key != "random2" and load_instr_weight[key] >= weight and key not in CLA_NOT_SUPPORT_LOAD]
+            choices = [key for key in load_instr_weight.keys() if key != "random" and key != "random2" and load_instr_weight[key] >= weight and key not in CLA_NOT_SUPPORT_LOAD and not (DISABLE_CLA_ADDR_REGS and key in ADDR_REG_LOAD)]
         # 随机选择一个指令并执行
         load_instr_map[random.choice(choices)]()
     elif instr_name in load_instr_map:
