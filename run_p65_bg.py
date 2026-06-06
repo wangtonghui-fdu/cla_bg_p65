@@ -300,7 +300,11 @@ def generate_random(cfg: dict[str, Any], case_name: str, instr_count: int, run_d
     env = os.environ.copy()
     env["QX_TEST_CLA"] = "1"
     env["QX_PACKED_INSTR"] = "1" if pack else "0"
-    env["QX_DISABLE_CLA_ADDR_REGS"] = "1"
+    # P65 defaults to disabling the special address registers (historically hardcoded
+    # on). Kept as the code default (default True) so a fresh clone with no config key
+    # still runs with them disabled; the UI checkbox can turn it off. 039 defaults False.
+    if cfg["local"].get("disable_cla_addr_regs", True):
+        env["QX_DISABLE_CLA_ADDR_REGS"] = "1"
     env["QX_OUTPUT_DIR"] = str(output_dir)
     run_checked(
         [*python_script_command(gen_dir / "main.py"), case_name, str(instr_count)],
@@ -1168,9 +1172,33 @@ def compare_files(wo_path: Path, w_path: Path, compare_path: Path) -> dict[str, 
     wo_rows = [row for row in (parse_trace_line(line) for line in wo_path.read_text(errors="replace").splitlines()) if row]
     w_rows = [row for row in (parse_trace_line(line) for line in w_path.read_text(errors="replace").splitlines()) if row]
     count = min(len(wo_rows), len(w_rows))
+
+    # Disassembly map (pc -> mnemonic) so we can tell a CR-read (movc2g) divergence
+    # apart from a real data corruption. A movc2g copies the Control Register into a
+    # GR; its low bits are live status flags (CR[4]=CON scalar-compare result, CF/LVF/
+    # LUF/OF/OVC ...). The interrupt does not preserve CR across the bg preempt and
+    # CON is unwritable by movg2c, so the foreground task's compare result leaks in.
+    # That is Bug B ("CR误差"), NOT a dropped/garbled computation result.
+    dis_map: dict[int, str] = {}
+    try:
+        if str(SCRIPT_DIR) not in sys.path:
+            sys.path.insert(0, str(SCRIPT_DIR))
+        from analyze_bg_mismatch import parse_disassembly
+
+        dis_map = parse_disassembly(compare_path.parent)
+    except Exception:
+        dis_map = {}
+
+    def _is_movc2g(pc: str) -> bool:
+        try:
+            return dis_map.get(int(pc, 16), "").lower().startswith("movc2g")
+        except (ValueError, AttributeError):
+            return False
+
     mismatches: list[str] = []
     pc_only = 0
     regval = 0
+    cr_err = 0
     first_mismatch_line = 0
     for idx in range(count):
         wo = wo_rows[idx]
@@ -1179,11 +1207,21 @@ def compare_files(wo_path: Path, w_path: Path, compare_path: Path) -> dict[str, 
             continue
         if first_mismatch_line == 0:
             first_mismatch_line = idx + 1
+        tag = ""
         if wo[:2] == w[:2] and wo[2] != w[2]:
             pc_only += 1
         else:
             regval += 1
-        mismatches.append(f"line {idx + 1}: WO={wo[0]} {wo[1]} {wo[2]} | W={w[0]} {w[1]} {w[2]}")
+            # CR误差: aligned movc2g read (same reg+pc) whose CR value differs.
+            if wo[0] == w[0] and wo[2] == w[2] and wo[1] != w[1] and _is_movc2g(wo[2]):
+                cr_err += 1
+                try:
+                    diff = int(wo[1], 16) ^ int(w[1], 16)
+                except ValueError:
+                    diff = -1
+                bit = " CON/CR[4]" if diff == 0x10 else ""
+                tag = f"  [CR误差 diff=0x{diff:x}{bit}]" if diff >= 0 else "  [CR误差]"
+        mismatches.append(f"line {idx + 1}: WO={wo[0]} {wo[1]} {wo[2]} | W={w[0]} {w[1]} {w[2]}{tag}")
     if len(wo_rows) != len(w_rows):
         if first_mismatch_line == 0:
             first_mismatch_line = count + 1
@@ -1208,6 +1246,7 @@ def compare_files(wo_path: Path, w_path: Path, compare_path: Path) -> dict[str, 
         f"Number of mismatches: {len(mismatches)}",
         f"PC-only mismatches: {pc_only}",
         f"Reg/value mismatches: {regval}",
+        f"CR误差 (movc2g CR-flag, e.g. CON leak): {cr_err}",
         "",
     ]
     if alignment_issue:
@@ -1241,10 +1280,16 @@ def compare_files(wo_path: Path, w_path: Path, compare_path: Path) -> dict[str, 
         "mismatches": len(mismatches),
         "pc_only_mismatches": pc_only,
         "reg_value_mismatches": regval,
+        "cr_mismatches": cr_err,
     }
+    # If every divergence is a CR-read (movc2g) flag leak and rows line up, the failure
+    # is the known CR误差 (Bug B: CON/CR not preserved across the bg interrupt), not a
+    # dropped writeback or data corruption.
+    if cr_err and cr_err == regval == len(mismatches) and len(wo_rows) == len(w_rows) and pc_only == 0:
+        result["failure_reason"] = "cr_flag_only"
     if alignment_issue:
         result["alignment_issue"] = alignment_issue
-        if alignment_issue["residual_mismatches"] == 0:
+        if alignment_issue["residual_mismatches"] == 0 and not result.get("failure_reason"):
             result["failure_reason"] = "single_extra_or_missing_trace_row"
     return result
 

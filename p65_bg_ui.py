@@ -214,6 +214,9 @@ def failure_reason_for_run(run_dir: str, summary: dict[str, Any]) -> str:
         return "未完成对比"
     if summary.get("pass"):
         return "PASS"
+    if summary.get("failure_reason") == "cr_flag_only":
+        n = summary.get("cr_mismatches", "")
+        return f"CR误差：movc2g 读 CR 标志位差异（CON/CR[4] 未跨中断保护，Bug B）{n} 条，非掉写回/数据损坏"
     alignment_issue = summary.get("alignment_issue") or {}
     if alignment_issue.get("residual_mismatches") == 0:
         side = alignment_issue.get("side", "?")
@@ -350,7 +353,7 @@ def format_compare_brief(result: dict[str, Any]) -> str:
         f"Mismatch: {summary.get('mismatches', '')}\n"
         f"{ref_line}"
         f"失败原因: {failure_reason}\n"
-        f"Reg/value: {summary.get('reg_value_mismatches', '')}\n"
+        f"Reg/value: {summary.get('reg_value_mismatches', '')}（其中 CR误差: {summary.get('cr_mismatches', 0)}）\n"
         f"输出目录: {run_dir}\n"
     )
 
@@ -802,6 +805,10 @@ class MainWindow(QMainWindow):
         self.sim_timeout_spin.setSuffix(" s")
         self.unpack_pipes_check = QCheckBox("拆包运行")
         self.unpack_pipes_check.setToolTip("开启后让随机生成器不打包(QX_PACKED_INSTR=0),每个 bundle 只放一条真实指令、保持其原始槽位;关闭则正常打包。")
+        self.disable_addr_regs_check = QCheckBox("禁用间接寄存器")
+        self.disable_addr_regs_check.setToolTip(
+            "开启后 CLA 随机生成不选择 OFF/BAR/MR，并排除 GR30，避免间接取址/取指相关寄存器写入。"
+        )
 
         self.reference_compare_check = QCheckBox("模拟器/WO对比")
         self.reference_compare_check.setToolTip("开启后额外运行本地模拟器，生成 reference_sim.gr，并和无中断 WO trace 做 GR/value 对比。")
@@ -831,6 +838,7 @@ class MainWindow(QMainWindow):
         form.addRow("仿真次数", self.run_count_spin)
         form.addRow("仿真时间", self.sim_timeout_spin)
         form.addRow("指令打包", self.unpack_pipes_check)
+        form.addRow("寄存器限制", self.disable_addr_regs_check)
         form.addRow("推荐时间", self.timeout_label)
         form.addRow("模拟对比", self.reference_compare_check)
         layout.addLayout(form, 0, 0, 5, 1)
@@ -900,6 +908,7 @@ class MainWindow(QMainWindow):
         timeout_value = int(self.settings.get("sim_timeout", auto_timeout(self.instr_spin.value())) or auto_timeout(self.instr_spin.value()))
         self.sim_timeout_spin.setValue(timeout_value)
         self.unpack_pipes_check.setChecked(bool(local.get("unpack_pipes", False)))
+        self.disable_addr_regs_check.setChecked(bool(local.get("disable_cla_addr_regs", True)))
         reference_sim = local.get("reference_sim") or {}
         self.reference_compare_check.setChecked(bool(reference_sim.get("enabled", False)))
         self._update_timeout_label()
@@ -967,6 +976,7 @@ class MainWindow(QMainWindow):
         self.cfg["ssh"]["password"] = self.password_edit.text()
         self.cfg["remote"]["sim_dir"] = self.sim_dir_edit.text().strip().rstrip("/")
         self.cfg["local"]["unpack_pipes"] = self.unpack_pipes_check.isChecked()
+        self.cfg["local"]["disable_cla_addr_regs"] = self.disable_addr_regs_check.isChecked()
         self.cfg["local"].setdefault("reference_sim", {})
         self.cfg["local"]["reference_sim"]["enabled"] = self.reference_compare_check.isChecked()
         self.cfg["local"]["reference_sim"].setdefault("dir", "reference_sim")

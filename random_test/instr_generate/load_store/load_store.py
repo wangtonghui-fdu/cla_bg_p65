@@ -22,8 +22,12 @@ CLA_NOT_SUPPORT_STORE = ClaConfig.CLA_NOT_SUPPORT_STORE
 DISABLE_CLA_ADDR_REGS = TestConfig.DISABLE_CLA_ADDR_REGS
 # loado*/storeo* use OFF/BAR/MR indirect addressing; they cannot be generated
 # when address registers are disabled (the OFF/BAR/MR pools are emptied).
-ADDR_REG_LOAD = {"loado16", "loado32"}
-ADDR_REG_STORE = {"storeo16", "storeo32"}
+# loadu*/storeu* are NOT OFF/BAR/MR based (they use a plain GR base + imm), but
+# they auto-update (post-modify) the base GR via the extended (wenx) write port,
+# which is a Bug-A interrupt-resume drop trigger. When DISABLE_CLA_ADDR_REGS is
+# on we also exclude them so the stream has no auto-update (wenx) writebacks.
+ADDR_REG_LOAD = {"loado16", "loado32", "loadu8", "loadu16", "loadu32"}
+ADDR_REG_STORE = {"storeo16", "storeo32", "storeu8", "storeu16", "storeu32"}
 
 
 def handle_slot3_instr(instr_name: str):
