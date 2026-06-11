@@ -124,6 +124,7 @@ def generate_memory_imm(bit_width, low_zero=0, need_base=True, imm_width=9, MR=0
 
     imm_base = 0
     imm = 0
+    imm_signed = 0  # 偏移的“有符号”真值，用于按硬件语义计算地址
 
     while attempts < max_attempts:
         attempts += 1
@@ -131,19 +132,31 @@ def generate_memory_imm(bit_width, low_zero=0, need_base=True, imm_width=9, MR=0
         # 生成 imm_base，并确保其低位有 low_zero 个 0
         imm_base = 0
         imm = 0
+        imm_signed = 0
         if need_base:
             imm_base = random.randint(addr_start, addr_end - 4 * MR)
             imm_base = (imm_base >> low_zero) << low_zero  # 强制低位清零
-            imm = random.randint(0, 2 ** imm_width - 1)
+            if MR:
+                # loado/storeo：返回的 imm 偏移用不上（BAR 间接寻址），保留原正向探针
+                imm = random.randint(0, 2 ** imm_width - 1)
+                imm_signed = imm
+            else:
+                # 普通 load/store：硬件把这 imm_width 位偏移当“有符号补码”解释
+                # （如 9 位 -> [-256, 255]）。必须按有符号生成、并用有符号值做范围检查，
+                # 否则生成器以为是 +imm、硬件却当成负偏移，地址会跌出数据区（见 Bug：基址
+                # 近数据区底部时负偏移下溢到代码段）。imm 存为补码位段供汇编器编码。
+                imm_signed = random.randint(-(1 << (imm_width - 1)), (1 << (imm_width - 1)) - 1)
+                imm = imm_signed & ((1 << imm_width) - 1)
         else:
             # 不需要基地址时，imm_base 固定为 0
             imm_base = 0
             imm = random.randint(addr_start >> offset, addr_end >> offset)
+            imm_signed = imm
             if addr_start >> offset > 2 ** imm_width - 1:
                 return "0x0000","0x0000"
 
-        # 计算最终地址
-        final_addr = imm_base + (imm << offset)
+        # 计算最终地址（用有符号偏移，匹配硬件行为）
+        final_addr = imm_base + (imm_signed << offset)
         # mr = memory renge，相对于分配内存段的范围
         final_addr_mr = imm_base + MR
         start_addr_mr = imm_base - MR

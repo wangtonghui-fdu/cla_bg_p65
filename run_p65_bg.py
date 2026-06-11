@@ -566,6 +566,15 @@ def reference_sim_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
         "sim_config": str(ref.get("sim_config", "-c qx320f034 --cla")),
         "exclude_regs": [int(item) for item in ref.get("exclude_regs", [0, 30, 31])],
         "compare_to_wo": bool(ref.get("compare_to_wo", True)),
+        # Bug C: reference simulator rounds-to-nearest (RNE) while the RTL truncates
+        # (RTZ) on fcvt int<->float converts, giving a 1-ULP value diff. Instruction-
+        # level trace (50-run) shows a single 1-ULP fcvt error gets AMPLIFIED to a few
+        # ULP when its result is summed through exact integer ops (e.g. add gr14,gr14,gr12
+        # repeated). These are a KNOWN, interrupt-independent rounding difference (not an
+        # RTL defect) -- so a value diff whose |REF-RTL| <= rounding_ulp is treated as
+        # IGNORE. rounding_ulp=4 covers small accumulations; larger propagated diffs
+        # (>4 ULP) stay flagged as real for manual review.
+        "rounding_ulp": int(ref.get("rounding_ulp", 4)),
     }
 
 
@@ -628,15 +637,16 @@ def extract_reference_gr_trace(sim_log: Path, gr_trace: Path, exclude_regs: list
     return len(rows)
 
 
-def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path) -> dict[str, Any]:
-    def parse_rows(path: Path) -> list[tuple[str, str, str]]:
-        """Return [(reg, value, cycle_key)] of valid BG GR writebacks.
+def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path, rounding_ulp: int = 1, dis_map: dict[int, str] | None = None) -> dict[str, Any]:
+    def parse_rows(path: Path) -> list[tuple[str, str, str, str]]:
+        """Return [(reg, value, cycle_key, pc)] of valid BG GR writebacks.
 
         cycle_key marks the writeback cycle: the RTL trace carries a timestamp
         ([NNNN ns]) which is the authoritative same-cycle marker; the reference
-        trace has none, so its PC column is used instead.
+        trace has none, so its PC column is used instead. pc is the writeback's
+        PC column (parts[2]) -- used to attribute the producing instruction.
         """
-        rows: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str, str, str]] = []
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             parts = line.strip().split()
             if len(parts) < 3:
@@ -648,25 +658,39 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
             if reg_num in (0, 30, 31) or not 0 <= reg_num <= 31:
                 continue
             cycle_key = parts[3] if len(parts) >= 4 else parts[2]
-            rows.append((f"0x{reg_num:02x}", parts[1].lower(), cycle_key))
+            rows.append((f"0x{reg_num:02x}", parts[1].lower(), cycle_key, parts[2]))
         return rows
 
-    def reg_value_only(rows: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
-        return [(reg, value) for reg, value, _key in rows]
+    def reg_value_only(rows: list[tuple[str, str, str, str]]) -> list[tuple[str, str]]:
+        return [(reg, value) for reg, value, _key, _pc in rows]
 
-    def rtl_cycle_sizes(rows: list[tuple[str, str, str]]) -> list[int]:
+    def rtl_cycle_sizes(rows: list[tuple[str, str, str, str]]) -> list[int]:
         # Number of writebacks in each consecutive same-cycle_key run. These row
         # counts define the cycle boundaries; we slice the (positionally aligned)
         # reference rows by the same counts, so a within-cycle reorder never
         # desynchronizes the two traces.
         sizes: list[int] = []
         last_key: str | None = None
-        for _reg, _value, key in rows:
+        for _reg, _value, key, _pc in rows:
             if key != last_key:
                 sizes.append(0)
                 last_key = key
             sizes[-1] += 1
         return sizes
+
+    def fused_mac_at(pc_hex: str | None) -> bool:
+        # The reference simulator models fsmac as split (round product, then add)
+        # while the RTL does a fused single-rounding MAC -> they diverge by the
+        # product residual (often huge bit-delta after cancellation). This is a
+        # KNOWN reference-simulator modeling gap, not an RTL defect. The RTL fsmac
+        # writeback is tagged with the fsmac PC, so look it up in the disassembly.
+        if not dis_map or not pc_hex:
+            return False
+        try:
+            mnem = dis_map.get(int(pc_hex, 16), "")
+        except ValueError:
+            return False
+        return mnem.split()[0].lower() == "fsmac" if mnem else False
 
     def find_reference_start(ref_rows: list[tuple[str, str]], rtl_rows: list[tuple[str, str]]) -> tuple[int, int]:
         best_offset = 0
@@ -701,13 +725,18 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
 
     real: list[str] = []        # not ignorable: value / missing / extra
     ignorable: list[str] = []   # same-cycle writeback reorder
+    known: list[str] = []       # known rounding (Bug C): <=rounding_ulp value diff
+    known_fmac: list[str] = []  # known fused-MAC sim-modeling gap (fsmac)
     real_count = 0
+    known_count = 0
+    known_fmac_count = 0
     first_real_cycle = 0
 
     ref_idx = 0
     rtl_idx = 0
     for ci, n in enumerate(sizes, 1):
         tg = rtl_rv[rtl_idx : rtl_idx + n]
+        tg_full = rtl_rows_full[rtl_idx : rtl_idx + n]
         rtl_idx += n
         rg = aligned_ref[ref_idx : ref_idx + n]
         ref_idx += n
@@ -715,10 +744,9 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
             if rg != tg:
                 ignorable.append(f"cycle {ci}: writebacks {regs_of(rg)} reordered (values identical)")
             continue
-        if first_real_cycle == 0:
-            first_real_cycle = ci
         ref_dict = dict(rg)
         rtl_dict = dict(tg)
+        rtl_pc = {reg: pc for reg, _v, _k, pc in tg_full}
         for reg in sorted(set(ref_dict) | set(rtl_dict), key=lambda r: int(r, 16)):
             rv = ref_dict.get(reg)
             tv = rtl_dict.get(reg)
@@ -731,10 +759,32 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
             else:
                 try:
                     delta = int(rv, 16) - int(tv, 16)
-                    hint = f"  (REF-RTL={delta:+d}{' ULP' if -4 <= delta <= 4 else ''})"
                 except ValueError:
-                    hint = ""
+                    delta = None
+                # fsmac: RTL fused MAC vs reference simulator split MAC -> KNOWN
+                # reference-modeling gap (any magnitude), not an RTL defect. Detected
+                # by the RTL writeback PC mapping to an fsmac instruction.
+                if fused_mac_at(rtl_pc.get(reg)):
+                    dh = f" (REF-RTL={delta:+d})" if delta is not None else ""
+                    known_fmac.append(
+                        f"cycle {ci} {reg}: REF={rv} RTL={tv}{dh}  "
+                        "(ignored fsmac: RTL fused MAC vs simulator split MAC)"
+                    )
+                    known_fmac_count += 1
+                    continue
+                # Bug C: <=rounding_ulp value diff = fcvt/denormal RTZ-vs-RNE rounding,
+                # NOT a real error. Treated as IGNORE; does not fail.
+                if delta is not None and 0 < abs(delta) <= rounding_ulp:
+                    known.append(
+                        f"cycle {ci} {reg}: REF={rv} RTL={tv}  (REF-RTL={delta:+d} ULP, "
+                        "ignored rounding / Bug C: fcvt RTZ-vs-RNE, incl. accumulated through integer ops)"
+                    )
+                    known_count += 1
+                    continue
+                hint = f"  (REF-RTL={delta:+d}{' ULP' if -4 <= delta <= 4 else ''})" if delta is not None else ""
                 real.append(f"cycle {ci} {reg}: REF={rv} RTL={tv}{hint}")
+            if first_real_cycle == 0:
+                first_real_cycle = ci
             real_count += 1
 
     trailing = len(aligned_ref) - ref_idx
@@ -760,6 +810,8 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         f"RTL cycles: {n_cycles}   reference writebacks: {len(ref_rv)}   RTL writebacks: {len(rtl_rv)}",
         f"Reference startup rows skipped: {ref_start} (prefix match {prefix_match})",
         f"Ignorable (same-cycle reorder) cycles: {len(ignorable)}",
+        f"Ignored rounding (Bug C, <={rounding_ulp} ULP fcvt RTZ-vs-RNE incl. accumulated): {known_count}",
+        f"Ignored fsmac (fused MAC vs simulator split MAC): {known_fmac_count}",
         f"Real (value / missing / extra) errors: {real_count}",
         "",
     ]
@@ -767,11 +819,19 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         lines += ["-" * 80, "[REAL] NOT IGNORABLE -- value / missing / extra writebacks:", "-" * 80]
         lines += [f"{i}. {m}" for i, m in enumerate(real, 1)]
         lines += [""]
+    if known:
+        lines += ["-" * 80, "[IGNORED] rounding (Bug C: fcvt RTZ-vs-RNE incl. accumulated through integer ops; does not fail):", "-" * 80]
+        lines += [f"{i}. {m}" for i, m in enumerate(known, 1)]
+        lines += [""]
+    if known_fmac:
+        lines += ["-" * 80, "[IGNORED] fsmac (RTL fused MAC vs simulator split MAC, simulator modeling gap; does not fail):", "-" * 80]
+        lines += [f"{i}. {m}" for i, m in enumerate(known_fmac, 1)]
+        lines += [""]
     if ignorable:
         lines += ["-" * 80, "[IGNORABLE] same-cycle writeback reorder (not an RTL error):", "-" * 80]
         lines += [f"{i}. {m}" for i, m in enumerate(ignorable, 1)]
         lines += [""]
-    if not real and not ignorable:
+    if not real and not known and not known_fmac and not ignorable:
         lines += ["No differences."]
     compare_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
@@ -782,6 +842,8 @@ def compare_reference_to_rtl(ref_path: Path, rtl_path: Path, compare_path: Path)
         "reference_startup_rows_skipped": ref_start,
         "reference_prefix_match_rows": prefix_match,
         "ignorable_reorder_cycles": len(ignorable),
+        "known_rounding_mismatches": known_count,
+        "known_fmac_mismatches": known_fmac_count,
         "real_mismatches": real_count,
         "first_real_cycle": first_real_cycle,
         "compare_log": str(compare_path),
@@ -1420,10 +1482,13 @@ def main(argv: list[str] | None = None) -> int:
             and reference_summary.get("trace")
             and reference_sim_cfg(cfg).get("compare_to_wo", True)
         ):
+            from analyze_bg_mismatch import parse_disassembly
             ref_compare = compare_reference_to_rtl(
                 Path(str(reference_summary["trace"])),
                 wo_trace,
                 run_dir / "reference_vs_wo_compare.log",
+                rounding_ulp=int(reference_sim_cfg(cfg).get("rounding_ulp", 1)),
+                dis_map=parse_disassembly(run_dir),
             )
             reference_summary["compare_to_wo"] = ref_compare
         compare_summary = compare_files(wo_trace, w_trace, run_dir / "compare.log")

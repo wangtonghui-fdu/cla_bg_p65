@@ -310,6 +310,8 @@ def format_reference_compare_cell(summary: dict[str, Any]) -> str:
         return (
             f"{'PASS' if ref_compare.get('pass') else 'FAIL'} "
             f"real={ref_compare.get('real_mismatches', '')} "
+            f"舍入ign={ref_compare.get('known_rounding_mismatches', 0)} "
+            f"fsmac ign={ref_compare.get('known_fmac_mismatches', 0)} "
             f"ign={ref_compare.get('ignorable_reorder_cycles', '')}"
         )
     if reference_sim.get("status") in {"disabled", "skipped"} or not reference_sim:
@@ -336,7 +338,10 @@ def format_compare_brief(result: dict[str, Any]) -> str:
         ref_line = (
             f"模拟器/WO: {'PASS' if ref_compare.get('pass') else 'FAIL'} "
             f"writebacks={ref_compare.get('reference_writebacks', '')}/{ref_compare.get('rtl_writebacks', '')} "
-            f"real={ref_compare.get('real_mismatches', '')} ignore={ref_compare.get('ignorable_reorder_cycles', '')}\n"
+            f"real={ref_compare.get('real_mismatches', '')} "
+            f"舍入(ignore,Bug C)={ref_compare.get('known_rounding_mismatches', 0)} "
+            f"fsmac(ignore,融合MAC)={ref_compare.get('known_fmac_mismatches', 0)} "
+            f"ignore={ref_compare.get('ignorable_reorder_cycles', '')}\n"
         )
     elif reference_sim.get("status") in {"disabled", "skipped"} or not reference_sim:
         ref_line = "模拟器/WO: 未开启\n"
